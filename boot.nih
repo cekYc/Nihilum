@@ -1,0 +1,289 @@
+fn draw_char(fb: u64, scanline: u64, font_ptr: u64, ascii: u64, x_pos: u64, y_pos: u64, color: u64) {
+    let glyph_ptr: u64 = font_ptr + (ascii * 8);
+    let char_data: u64 = glyph_ptr.*; 
+
+    mut row: u64 = 0;
+    mut data: u64 = 0;
+    mut s: u64 = 0;
+    mut row_val: u64 = 0;
+    mut col: u64 = 0;
+    mut div: u64 = 0;
+    mut bit_val: u64 = 0;
+    mut bit: u64 = 0;
+    mut sx: u64 = 0;
+    mut sy: u64 = 0;
+    mut px: u64 = 0;
+    mut py: u64 = 0;
+    mut p_offset: u64 = 0;
+    mut p_addr: u64 = 0;
+    
+    row = 0;
+    while row < 8 {
+        data = char_data;
+        s = 0;
+        while s < row {
+            data = data / 256;
+            s = s + 1;
+        }
+        row_val = data - ((data / 256) * 256);
+
+        col = 0;
+        div = 128; 
+        
+        while col < 8 {
+            bit_val = row_val / div;
+            bit = bit_val - ((bit_val / 2) * 2);
+
+            if bit == 1 {
+                sx = 0;
+                while sx < 3 {
+                    sy = 0;
+                    while sy < 3 {
+                        px = x_pos + (col * 3) + sx;
+                        py = y_pos + (row * 3) + sy;
+                        p_offset = ((py * scanline) + px) * 4;
+                        p_addr = fb + p_offset;
+                        p_addr.* = color;
+                        sy = sy + 1;
+                    }
+                    sx = sx + 1;
+                }
+            }
+            div = div / 2;
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+}
+
+fn print_hex(fb: u64, scanline: u64, font_ptr: u64, x_pos: u64, y_pos: u64, val: u64, color: u64) {
+    mut div_hex: u64 = 1152921504606846976; 
+    mut cx: u64 = x_pos;
+    mut i: u64 = 0;
+    mut temp: u64 = 0;
+    mut nibble: u64 = 0;
+    mut ascii: u64 = 0;
+
+    draw_char(fb, scanline, font_ptr, 48, cx, y_pos, color);
+    cx = cx + 24;
+    draw_char(fb, scanline, font_ptr, 120, cx, y_pos, color);
+    cx = cx + 24;
+
+    while i < 16 {
+        temp = val / div_hex;
+        nibble = temp - ((temp / 16) * 16);
+        
+        if nibble < 10 {
+            ascii = nibble + 48;
+        }
+        if nibble > 9 {
+            ascii = nibble + 55;
+        }
+        
+        draw_char(fb, scanline, font_ptr, ascii, cx, y_pos, color);
+        
+        cx = cx + 24;
+        div_hex = div_hex / 16;
+        i = i + 1;
+    }
+}
+
+fn isr_handler() {
+    asm "extern sys_fb";
+    asm "extern sys_scanline";
+    asm "extern sys_font";
+    
+    let p_fb: u64 = &sys_fb;
+    let fb: u64 = p_fb.*;
+    
+    let p_scan: u64 = &sys_scanline;
+    let scanline: u64 = p_scan.*;
+    
+    let p_font: u64 = &sys_font;
+    let font: u64 = p_font.*;
+
+    let red: u64 = 0x00FF000000FF0000;
+
+    print_hex(fb, scanline, font, 50, 50, 0xDEADBEEF, red);
+    while 1 == 1 {}
+}
+
+fn alloc_page() -> u64 {
+    asm "extern pmm_count";
+    asm "extern pmm_starts";
+    asm "extern pmm_pages";
+
+    let p_count: u64 = &pmm_count;
+    let total_regions: u64 = p_count.*;
+    
+    mut i: u64 = 0;
+    mut start_array: u64 = &pmm_starts;
+    mut page_array: u64 = &pmm_pages;
+    
+    mut current_start_ptr: u64 = 0;
+    mut current_page_ptr: u64 = 0;
+    mut pages_available: u64 = 0;
+    mut allocated_addr: u64 = 0;
+
+    while i < total_regions {
+        current_start_ptr = start_array + (i * 8);
+        current_page_ptr = page_array + (i * 8);
+        
+        pages_available = current_page_ptr.*;
+        
+        if pages_available > 0 {
+            allocated_addr = current_start_ptr.*;
+            
+            current_start_ptr.* = allocated_addr + 4096;
+            
+            current_page_ptr.* = pages_available - 1;
+            
+            return allocated_addr;
+        }
+        
+        i = i + 1;
+    }
+    
+    return 0;
+}
+
+efi_fn efi_main(image: u64, systable: u64) -> u64 {
+    let conout_ptr: u64 = systable + 64;
+    let conout: u64 = conout_ptr.*;
+    let clear_ptr: u64 = conout + 48;
+    let clear_func: u64 = clear_ptr.*;
+    uefi_call(clear_func, conout);
+
+    let bs_ptr: u64 = systable + 96;
+    let bs: u64 = bs_ptr.*;
+    let locate_ptr: u64 = bs + 320;
+    let locate_protocol: u64 = locate_ptr.*;
+    let guid2: u64 = 0x6a5180d0de7afb96;
+    let guid1: u64 = 0x4a3823dc9042a9de;
+    let gop: u64 = 0;
+    let status: u64 = uefi_call(locate_protocol, &guid1, 0, &gop);
+
+    if status == 0 {
+        let mode_ptr: u64 = gop + 24;
+        let mode: u64 = mode_ptr.*;
+
+        let fb_ptr: u64 = mode + 24;
+        let fb: u64 = fb_ptr.*;
+        let info_ptr_addr: u64 = mode + 8;
+        let info: u64 = info_ptr_addr.*;
+
+        let packed_res: u64 = (info + 4).*;
+        let true_height: u64 = packed_res / 4294967296;
+        let true_width: u64 = packed_res - (true_height * 4294967296);
+        let scanline: u64 = true_width; 
+
+        asm "extern nihilum_font";
+        let font: u64 = &nihilum_font; 
+        
+        let c_neon: u64 = 0x0000FFFF0000FFFF;
+        let c_red:  u64 = 0x00FF000000FF0000;
+
+        mut x: u64 = (true_width / 2) - 220;
+        mut y: u64 = (true_height / 2) - 50;
+
+        print_hex(fb, scanline, font, x, y, fb, c_neon);
+        y = y + 40;
+        print_hex(fb, scanline, font, x, y, systable, c_red);
+
+        asm "extern sys_fb";
+        asm "extern sys_scanline";
+        asm "extern sys_font";
+
+        let p_fb: u64 = &sys_fb;
+        p_fb.* = fb;
+
+        let p_scan: u64 = &sys_scanline;
+        p_scan.* = scanline;
+        let p_font: u64 = &sys_font;
+        p_font.* = font;
+
+        let get_mmap_ptr: u64 = bs + 56;
+        let get_mmap: u64 = get_mmap_ptr.*;
+        let exit_bs_ptr: u64 = bs + 232;
+        let exit_bs: u64 = exit_bs_ptr.*;
+
+        mut map_size: u64 = 8192;
+        mut map_key: u64 = 0;
+        mut desc_size: u64 = 0;
+        mut desc_ver: u64 = 0;
+        
+        let map_ptr: u64 = &mmap_buf;
+        let p_desc_ver: u64 = &desc_ver;
+
+        asm "    sub rsp, 8";             
+        asm "    push qword [rbp-312]";   
+
+        let mmap_status: u64 = uefi_call(get_mmap, &map_size, map_ptr, &map_key, &desc_size);
+        asm "    add rsp, 16";            
+
+        y = y + 40;
+        print_hex(fb, scanline, font, x, y, mmap_status, 0x0000FF000000FF00);
+        
+        let ebs_status: u64 = uefi_call(exit_bs, image, map_key, 0, 0);
+
+        y = y + 40;
+        print_hex(fb, scanline, font, x, y, ebs_status, 0x00FF00FF00FF00FF);
+
+        asm "    cli"; 
+        asm "extern setup_idt_asm";
+        asm "    call setup_idt_asm";
+
+        mut offset: u64 = 0;
+        mut current_desc: u64 = 0;
+        mut mem_type: u64 = 0;
+        mut phys_start: u64 = 0;
+        mut page_count: u64 = 0;
+        
+        y = y + 40;
+
+        while offset < map_size {
+            current_desc = map_ptr + offset;
+            mem_type = current_desc.*; 
+            
+            if mem_type == 7 {
+                phys_start = (current_desc + 8).*;
+                page_count = (current_desc + 24).*;
+                
+                if y < (true_height - 50) {
+                    print_hex(fb, scanline, font, x, y, phys_start, 0x0000FF000000FF00);
+                    print_hex(fb, scanline, font, x + 425, y, page_count, 0x0000FFFF0000FFFF);
+                    asm "extern pmm_count";
+                    let p_count_ptr: u64 = &pmm_count;
+                    let current_index: u64 = p_count_ptr.*;
+                    if current_index < 64 {
+                        asm "extern pmm_starts";
+                        let p_starts_array: u64 = &pmm_starts;
+                        let target_start_addr: u64 = p_starts_array + (current_index * 8);
+                        target_start_addr.* = phys_start;
+
+                        asm "extern pmm_pages";
+                        let p_pages_array: u64 = &pmm_pages;
+                        let target_page_addr: u64 = p_pages_array + (current_index * 8);
+                        target_page_addr.* = page_count;
+
+                        p_count_ptr.* = current_index + 1;
+                    }
+                    y = y + 40;
+                }
+            }
+            offset = offset + desc_size;
+        }
+    }
+
+    while 1 == 1 {
+    }
+    
+    asm "section .bss";
+    asm "mmap_buf: resb 8192";
+    asm "pmm_starts: resq 64"; 
+    asm "pmm_pages:  resq 64"; 
+    asm "pmm_count:  resq 1";  
+    asm "section .text";
+
+    return status;
+}

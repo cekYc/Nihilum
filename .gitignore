@@ -1,0 +1,21 @@
+# Compiled Object files
+*.o
+*.obj
+
+# Executables and Binaries
+BOOTX64.EFI
+nihilum
+*.bin
+*.iso
+*.img
+*.elf
+
+# Virtual Machine / Emulator files
+hdd/
+*.vdi
+*.vmdk
+*.qcow2
+
+# OS generated files
+.DS_Store
+Thumbs.db
